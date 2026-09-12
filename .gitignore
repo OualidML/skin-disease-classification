@@ -1,0 +1,23 @@
+﻿# Dataset folders & raw images
+data/
+test_images/
+*.jpg
+
+# Environment & Cache
+venv/
+env/
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+
+# Troubleshooting / Scratch scripts
+fast_verify.py
+find_exact_case.py
+inspect_nb.py
+run_side_by_side_verification.py
+verify_full_pipeline.py
+verify_melanomas.py
+
+# Checkpoints & Archives (prevent duplicating model files)
+artifacts/checkpoints/
+*.zip
