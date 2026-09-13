@@ -174,6 +174,15 @@ loc_selected = st.sidebar.selectbox("Lesion Site (Localization)", loc_display_op
 selected_loc_raw = loc_categories[loc_display_options.index(loc_selected)]
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("ℹ️ About This Project")
+st.sidebar.markdown(
+    "**Multimodal Dermatological Assistant** fuses deep CNN image features (EfficientNetB0) with patient metadata (age, sex, site) via a calibrated joint neural network.\n\n"
+    "- 📊 **Dataset Credit**: Trained and evaluated on the benchmark [HAM10000 Dataset](https://doi.org/10.7910/DVN/DBW864) (Tschandl et al., 2018).\n"
+    "- 🐙 **GitHub Repository**: [OualidML/skin-disease-classification](https://github.com/OualidML/skin-disease-classification)\n"
+    "- 🎯 **Probability Calibration**: Temperature-scaled logits ($T = 1.5909$) for calibrated risk triage."
+)
+
+st.sidebar.markdown("---")
 st.sidebar.caption(
     "⚠️ **Ethical & Clinical Disclaimer:** "
     "This application is a research prototype for decision support. "
