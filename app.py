@@ -71,8 +71,16 @@ RISK_TIERS = {
 def load_assets():
     preprocessor = joblib.load('models/metadata_preprocessor.pkl')
     label_encoder = joblib.load('models/label_encoder.pkl')
-    temp_dict = joblib.load('models/calibration_temperature.pkl')
-    T = float(temp_dict['temperature'])
+    calib_data = joblib.load('models/calibration_temperature.pkl')
+    if isinstance(calib_data, dict):
+        if 'temperature' in calib_data:
+            T = float(calib_data['temperature'])
+        elif 'temp' in calib_data:
+            T = float(calib_data['temp'])
+        else:
+            T = float(next(iter(calib_data.values())))
+    else:
+        T = float(calib_data)
     
     # Extract fitted categorical dropdown options programmatically
     cat_encoder = preprocessor.named_transformers_['cat']
@@ -81,9 +89,22 @@ def load_assets():
     
     # Load trained CNN model & feature extractor
     cnn_model = keras.models.load_model('models/best_cnn_model.keras')
+    gap_layer = None
+    for layer in cnn_model.layers:
+        if isinstance(layer, (keras.layers.GlobalAveragePooling2D, tf.keras.layers.GlobalAveragePooling2D)) or 'GlobalAveragePooling2D' in layer.__class__.__name__:
+            gap_layer = layer
+            break
+    if gap_layer is None:
+        for layer in cnn_model.layers:
+            if 'global_average_pooling' in layer.name.lower() or 'gap' in layer.name.lower():
+                gap_layer = layer
+                break
+    if gap_layer is None:
+        raise ValueError("Could not resolve GlobalAveragePooling2D layer in best_cnn_model.keras!")
+
     feature_extractor = keras.Model(
         inputs=cnn_model.input,
-        outputs=cnn_model.get_layer("global_average_pooling2d").output
+        outputs=gap_layer.output
     )
     
     # Load fusion model & rebuild linear logit model
