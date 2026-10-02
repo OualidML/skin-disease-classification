@@ -1,3 +1,4 @@
+import requests 
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -51,9 +52,6 @@ MALIGNANCY_RISK = {
 }
 
 # Unified 3-Tier Risk Hierarchy
-# High Risk (Red): mel, bcc, akiec
-# Moderate Risk (Amber): Borderline / Low-confidence cases
-# Low Risk (Green): nv, bkl, vasc, df
 MALIGNANT_CLASSES = ["mel", "bcc", "akiec"]
 
 RISK_TIERS = {
@@ -82,12 +80,10 @@ def load_assets():
     else:
         T = float(calib_data)
     
-    # Extract fitted categorical dropdown options programmatically
     cat_encoder = preprocessor.named_transformers_['cat']
     sex_categories = list(cat_encoder.categories_[0])
     loc_categories = list(cat_encoder.categories_[1])
     
-    # Load trained CNN model & feature extractor
     cnn_model = keras.models.load_model('models/best_cnn_model.keras')
     gap_layer = None
     for layer in cnn_model.layers:
@@ -107,7 +103,6 @@ def load_assets():
         outputs=gap_layer.output
     )
     
-    # Load fusion model & rebuild linear logit model
     fusion_model_path = 'models/best_fusion_model.keras'
     if not os.path.exists(fusion_model_path):
         raise FileNotFoundError(
@@ -123,7 +118,6 @@ def load_assets():
     logits_model = keras.Model(inputs=fusion_model.input, outputs=logits_tensor)
     logits_layer.set_weights(original_final_layer.get_weights())
     
-    # Sanity check logit reconstitution
     dummy_input = np.random.rand(1, 1299)
     pred_orig = fusion_model(dummy_input, training=False).numpy()
     logits = logits_model(dummy_input, training=False).numpy()
@@ -135,19 +129,15 @@ def load_assets():
     
     return preprocessor, label_encoder, T, feature_extractor, fusion_model, logits_model, sanity_status, sex_categories, loc_categories
 
-# Load cached assets
 with st.spinner("Initializing multimodal pipelines and models..."):
     preprocessor, label_encoder, T, feature_extractor, fusion_model, logits_model, sanity_status, sex_categories, loc_categories = load_assets()
 
 # Sidebar - Patient Demographics & Image Input
 st.sidebar.header("📋 Patient Demographics & Image Input")
-
-# Quick Demo Case Button / Selector
 st.sidebar.markdown("---")
 st.sidebar.subheader("🧪 Benchmark Case Loader")
 load_demo = st.sidebar.checkbox("Load Case 2 (`ISIC_0024700`) — Verified Slipped Case")
 
-# Set default values based on demo loader
 if load_demo:
     default_age = 35
     default_sex_idx = sex_categories.index('female') if 'female' in sex_categories else 0
@@ -157,21 +147,23 @@ else:
     default_sex_idx = 0
     default_loc_idx = 0
 
-# Image file uploader
 uploaded_file = st.sidebar.file_uploader("Upload Lesion Image (JPEG/PNG)", type=["jpg", "jpeg", "png"])
-
-# Patient Age slider
 age = st.sidebar.slider("Patient Age (years)", min_value=0, max_value=100, value=default_age, step=1)
 
-# Programmatic Sex Selectbox
 sex_display_options = [s.title() for s in sex_categories]
 sex_selected = st.sidebar.selectbox("Patient Sex", sex_display_options, index=default_sex_idx)
 selected_sex_raw = sex_categories[sex_display_options.index(sex_selected)]
 
-# Programmatic Localization Selectbox
 loc_display_options = [l.title() for l in loc_categories]
 loc_selected = st.sidebar.selectbox("Lesion Site (Localization)", loc_display_options, index=default_loc_idx)
 selected_loc_raw = loc_categories[loc_display_options.index(loc_selected)]
+
+st.sidebar.markdown("---")
+gemini_api_key = st.sidebar.text_input(
+    "Gemini API Key (For Clinical Summaries)", 
+    value="", 
+    type="password"
+)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("ℹ️ About This Project")
@@ -189,11 +181,9 @@ st.sidebar.caption(
     "It is not a certified medical device and does not replace expert dermatological examination."
 )
 
-# Header Title Banner
 st.title("🔬 Automated Skin Lesion & Dermatological Disease Classification")
 st.markdown("### *Multimodal Deep Learning Pipeline with Calibration & Asymmetric Safety Guard*")
 
-# Navigation Tabs
 tab1, tab2, tab3 = st.tabs([
     "🩺 Diagnostic Studio", 
     "📚 Skin Lesion Library", 
@@ -229,23 +219,19 @@ with tab1:
             st.subheader("🩺 Diagnostic Analysis & Safety Triage")
             
             with st.spinner("Computing multimodal inference..."):
-                # A. TensorFlow Image Preprocessing
                 img_tf = tf.image.decode_image(image_bytes, channels=3, expand_animations=False)
                 shape = tf.shape(img_tf)
                 h, w = shape[0], shape[1]
                 
-                # Downsample to 600x450 if non-standard resolution
                 if h.numpy() != 450 or w.numpy() != 600:
                     img_tf = tf.image.resize(img_tf, [450, 600])
                     
                 img_224 = tf.image.resize(img_tf, [224, 224])
                 img_final = tf.cast(img_224, tf.float32)
-                img_batch = tf.expand_dims(img_final, axis=0) # Shape: (1, 224, 224, 3)
+                img_batch = tf.expand_dims(img_final, axis=0)
                 
-                # Extract CNN features
                 image_features = feature_extractor(img_batch, training=False).numpy()
                 
-                # B. Metadata Preprocessing
                 meta_data = pd.DataFrame([{
                     'age': float(age),
                     'sex': selected_sex_raw,
@@ -254,10 +240,8 @@ with tab1:
                 meta_features = preprocessor.transform(meta_data)
                 meta_features = np.asarray(meta_features.todense() if hasattr(meta_features, 'todense') else meta_features)
                 
-                # C. Feature Fusion
-                fused_vector = np.concatenate([image_features, meta_features], axis=1) # Shape: (1, 1299)
+                fused_vector = np.concatenate([image_features, meta_features], axis=1)
                 
-                # D. Logits & Temperature Scaling Calibration
                 raw_logits = logits_model(fused_vector, training=False).numpy()
                 calibrated_logits = raw_logits / T
                 
@@ -265,7 +249,6 @@ with tab1:
                 exp_z = np.exp(z)
                 calibrated_probs = (exp_z / exp_z.sum(axis=1, keepdims=True))[0]
                 
-                # E. Safety Decision Logic
                 predicted_class_idx = calibrated_probs.argmax()
                 predicted_class_code = label_encoder.classes_[predicted_class_idx]
                 confidence = calibrated_probs[predicted_class_idx]
@@ -273,7 +256,6 @@ with tab1:
                 malignant_idxs = [list(label_encoder.classes_).index(c) for c in MALIGNANT_CLASSES]
                 malignant_mass = sum(calibrated_probs[i] for i in malignant_idxs)
                 
-                # Asymmetric Safety Rules
                 if malignant_mass >= 0.15:
                     triage_decision = "FLAG FOR REVIEW (malignancy risk present)"
                     triage_status = "red"
@@ -296,7 +278,6 @@ with tab1:
                         f"Manual dermatological verification is recommended."
                     )
                 
-                # Triage Banner Display
                 if triage_status == "red":
                     st.error(f"🔴 **Triage Decision: {triage_decision}**\n\n{triage_desc}")
                 elif triage_status == "orange":
@@ -304,14 +285,12 @@ with tab1:
                 else:
                     st.success(f"🟢 **Triage Decision: {triage_decision}**\n\n{triage_desc}")
                 
-                # Primary Prediction Summary
                 st.markdown(f"**Top Predicted Class:** `{predicted_class_code}` — **{DIAGNOSIS_DICT[predicted_class_code]}**")
                 st.markdown(f"**Model Confidence:** `{confidence:.2%}` | **Malignant Risk Mass:** `{malignant_mass:.2%}`")
                 
                 st.markdown("---")
                 st.markdown("#### 📊 Calibrated Probability Distribution (3-Tier Risk Hierarchy)")
                 
-                # Probability dataframe sorted by probability
                 prob_df = pd.DataFrame({
                     'Class': [label_encoder.classes_[i] for i in range(len(calibrated_probs))],
                     'Diagnosis': [DIAGNOSIS_DICT[label_encoder.classes_[i]] for i in range(len(calibrated_probs))],
@@ -319,7 +298,6 @@ with tab1:
                     'Tier': [RISK_TIERS[label_encoder.classes_[i]]['badge'] for i in range(len(calibrated_probs))]
                 }).sort_values(by='Calibrated Probability', ascending=False)
                 
-                # Display progress bars styled by 3-tier risk system
                 for _, row in prob_df.iterrows():
                     cls_code = row['Class']
                     tier_info = RISK_TIERS[cls_code]
@@ -327,6 +305,44 @@ with tab1:
                     
                     st.write(f"{tier_info['badge']} **{cls_code.upper()}** - {row['Diagnosis']}")
                     st.progress(float(prob_val), text=f"{prob_val:.2%}")
+
+                # ==========================================
+                # GEMINI API INTEGRATION BLOCK
+                # ==========================================
+                st.markdown("---")
+                if gemini_api_key:
+                    st.markdown("### 🤖 Automated Clinical Rationale")
+                    with st.spinner("Generating instant clinical briefing via Gemini..."):
+                        try:
+                            # Construct the clinical prompt using extracted variables
+                            prompt = f"""
+                            You are an expert clinical AI assistant. Based on the following multimodal skin lesion triage data, write a concise, professional 3-sentence clinical summary for the attending dermatologist.
+                            
+                            Patient Context: Age {age}, Sex: {selected_sex_raw}, Location: {selected_loc_raw}
+                            Top Predicted Class: {predicted_class_code} ({confidence*100:.2f}%)
+                            Calibrated Malignant Mass: {malignant_mass*100:.2f}%
+                            Safety Triage Decision: {triage_decision}
+                            
+                            Do not provide autonomous medical diagnoses. Simply summarize the model's visual and demographic findings, along with the safety triage status, in formal medical language.
+                            """
+                            
+                            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_api_key}"
+                            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                            headers = {"Content-Type": "application/json"}
+                            
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 200:
+                                summary = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+                                st.success(summary)
+                            else:
+                                st.error(f"Gemini API Error: {response.text}")
+                                
+                        except Exception as e:
+                            st.error(f"Connection Error: {e}")
+                else:
+                    st.info("💡 Enter a free Gemini API key in the sidebar to generate an automated clinical rationale.")
+
     else:
         st.info("👈 Please upload a skin lesion image or select **Load Case 2** in the sidebar to run the analysis.")
 
@@ -340,7 +356,6 @@ with tab2:
         "structured under a unified **3-Tier Risk Hierarchy** for safety triage:"
     )
     
-    # Tier 1: High Risk (Malignant & Pre-Cancerous)
     st.markdown("### 🔴 Tier 1: High Risk — Malignant & Pre-Cancerous Lesions")
     st.markdown(
         "These conditions require urgent dermatological evaluation and biopsy. "
@@ -351,25 +366,18 @@ with tab2:
     with col_t1_a:
         st.error("#### 🔴 MEL — Melanoma")
         st.markdown("**Malignant Skin Cancer**")
-        st.caption(
-            "Aggressive skin cancer arising from melanocytes. Requires immediate surgical excision and staging."
-        )
+        st.caption("Aggressive skin cancer arising from melanocytes. Requires immediate surgical excision and staging.")
     with col_t1_b:
         st.error("#### 🔴 BCC — Basal Cell Carcinoma")
         st.markdown("**Malignant Skin Cancer**")
-        st.caption(
-            "Common non-melanoma skin cancer originating from basal cells. Locally invasive with low metastasis risk."
-        )
+        st.caption("Common non-melanoma skin cancer originating from basal cells. Locally invasive with low metastasis risk.")
     with col_t1_c:
         st.error("#### 🔴 AKIEC — Actinic Keratosis / In-Situ")
         st.markdown("**Pre-Cancerous / Intraepithelial**")
-        st.caption(
-            "Dysplastic keratinocyte lesion induced by UV radiation. High risk of malignant transformation into invasive SCC; included in primary malignant triage mass."
-        )
+        st.caption("Dysplastic keratinocyte lesion induced by UV radiation. High risk of malignant transformation into invasive SCC; included in primary malignant triage mass.")
         
     st.markdown("---")
     
-    # Tier 2: Moderate Risk / Clinical Watch
     st.markdown("### 🟡 Tier 2: Moderate Risk — Review Required")
     st.markdown(
         "Lesions predicted as benign but where the model's calibrated confidence is below **$80.0\\%$**. "
@@ -378,7 +386,6 @@ with tab2:
     
     st.markdown("---")
     
-    # Tier 3: Low Risk (Benign Lesions)
     st.markdown("### 🟢 Tier 3: Low Risk — Benign Conditions")
     st.markdown(
         "Non-cancerous skin conditions. Triaged as safe only when model confidence is $\\ge 80.0\\%$ and total malignant mass is $< 15.0\\%$."
@@ -412,8 +419,6 @@ with tab3:
         "Multimodal Joint Fusion Model (EfficientNetB0 + Patient Metadata)."
     )
     
-    # Section A: Temperature Scaling & Logits Summary
-    st.markdown("#### ⚙️ Temperature Scaling & Logit Extraction")
     col_diag1, col_diag2 = st.columns(2)
     with col_diag1:
         st.info(f"**Optimal Calibration Temperature ($T$):** `{T:.6f}`")
@@ -422,7 +427,6 @@ with tab3:
         
     st.markdown("---")
     
-    # Section B: Quantitative Benchmark Tables
     col_tab_a, col_tab_b = st.columns(2)
     
     with col_tab_a:
@@ -445,7 +449,6 @@ with tab3:
         
     st.markdown("---")
     
-    # Section C: PRIMARY EVALUATION COMPARISON GALLERY (Agreed 6 Key Narrative Charts)
     st.markdown("### 🏆 Primary Evaluation Comparison Gallery (Model Narrative)")
     st.markdown(
         "These six core visual charts articulate the primary findings of the study: "
@@ -463,7 +466,6 @@ with tab3:
         ("final_comparison_confusion_matrices.png", "6. Normalized Confusion Matrices — All 3 Models Side-by-Side")
     ]
     
-    # Render Primary 6 Plots in a 2-Column Grid
     col_p1, col_p2 = st.columns(2)
     rendered_primary = 0
     
@@ -479,7 +481,6 @@ with tab3:
                 
     st.markdown("---")
     
-    # Section D: SECONDARY EXPANDER FOR DETAILED TRAINING DIAGNOSTICS
     with st.expander("🔍 Secondary Visuals: Training Curves & Individual Baseline Confusion Matrices"):
         st.markdown(
             "Detailed training convergence plots, dataset distribution, and individual baseline confusion matrices."
